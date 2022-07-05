@@ -85,8 +85,12 @@ describe('Commands', function () {
 
         it('can execute a command', async function () {
             const registered = commands.register('sum', sum)
-
             assert.strictEqual(await registered.execute(2, 2), 4)
+        })
+
+        it('throws when registering a command multiple times', function () {
+            commands.register('sum', sum)
+            assert.throws(() => commands.register('sum', sum))
         })
 
         describe('Command', function () {

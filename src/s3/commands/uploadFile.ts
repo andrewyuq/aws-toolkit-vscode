@@ -26,6 +26,7 @@ import * as localizedText from '../../shared/localizedText'
 import { CancellationError } from '../../shared/utilities/timeoutUtils'
 import { progressReporter } from '../progressReporter'
 import globals from '../../shared/extensionGlobals'
+import { getTelemetryResult, ToolkitError, UnknownError } from '../../shared/toolkitError'
 
 export interface FileSizeBytes {
     /**
@@ -91,13 +92,8 @@ export async function uploadFileCommand(
         const filesToUpload = await getFile(undefined, window)
 
         if (!filesToUpload) {
-            showOutputMessage(
-                localize('AWS.message.error.uploadFileCommand.noFileSelected', 'No file selected, cancelling upload'),
-                outputChannel
-            )
-            getLogger().info('UploadFile cancelled')
             telemetry.recordS3UploadObject({ result: 'Cancelled' })
-            return
+            throw new CancellationError('user')
         }
 
         uploadRequests.push(
@@ -111,47 +107,27 @@ export async function uploadFileCommand(
             const filesToUpload = await getFile(document, window)
 
             if (!filesToUpload || filesToUpload.length === 0) {
-                //if file is undefined, means the back button was pressed(there is no step before) or no file was selected
-                //thus break the loop of the 'wizard'
-                showOutputMessage(
-                    localize(
-                        'AWS.message.error.uploadFileCommand.noFileSelected',
-                        'No file selected, cancelling upload'
-                    ),
-                    outputChannel
-                )
-                getLogger().info('UploadFile cancelled')
                 telemetry.recordS3UploadObject({ result: 'Cancelled' })
-                return
+                throw new CancellationError('user')
             }
 
-            const bucketResponse = await getBucket(s3Client).catch(e => {})
-
-            if (!bucketResponse) {
-                telemetry.recordS3UploadObject({ result: 'Failed' })
-                return
-            }
+            const bucketResponse = await getBucket(s3Client).catch(e => {
+                telemetry.recordS3UploadObject({ result: getTelemetryResult(e) })
+                throw e
+            })
 
             if (typeof bucketResponse === 'string') {
                 if (bucketResponse === 'back') {
                     continue
                 }
 
-                showOutputMessage(
-                    localize(
-                        'AWS.message.error.uploadFileCommand.noBucketSelected',
-                        'No bucket selected, cancelling upload'
-                    ),
-                    outputChannel
-                )
-                getLogger().info('No bucket selected, cancelling upload')
                 telemetry.recordS3UploadObject({ result: 'Cancelled' })
-                return
+                throw new CancellationError('user')
             }
 
             const bucketName = bucketResponse.Name
             if (!bucketName) {
-                throw Error(`bucketResponse is not a S3.Bucket`)
+                throw new TypeError(`bucketResponse is not a S3.Bucket`)
             }
 
             uploadRequests.push(
@@ -401,16 +377,12 @@ export async function promptUserForBucket(
     promptUserFunction = promptUser,
     createBucket = createBucketCommand
 ): Promise<S3.Bucket | 'cancel' | 'back'> {
-    let allBuckets: S3.Bucket[]
-    try {
-        allBuckets = await s3client.listAllBuckets()
-    } catch (e) {
-        getLogger().error('Failed to list buckets from client', e)
-        window.showErrorMessage(
-            localize('AWS.message.error.promptUserForBucket.listBuckets', 'Failed to list buckets from client')
+    const allBuckets = await s3client.listAllBuckets().catch(e => {
+        throw new ToolkitError(
+            localize('AWS.message.error.promptUserForBucket.listBuckets', 'Failed to all list buckets'),
+            { cause: UnknownError.cast(e) }
         )
-        throw new Error('Failed to list buckets from client')
-    }
+    })
 
     const s3Buckets = allBuckets.filter(bucket => {
         return bucket && bucket.Name

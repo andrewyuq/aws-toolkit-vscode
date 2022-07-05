@@ -33,7 +33,7 @@ import { createCommonButtons } from '../../shared/ui/buttons'
 import { StepEstimator, Wizard, WIZARD_BACK } from '../../shared/wizards/wizard'
 import { createSingleFileDialog } from '../../shared/ui/common/openDialog'
 import { Prompter, PromptResult } from '../../shared/ui/prompter'
-import { ToolkitError } from '../../shared/toolkitError'
+import { ToolkitError, UnknownError } from '../../shared/toolkitError'
 import { FunctionConfiguration } from 'aws-sdk/clients/lambda'
 import globals from '../../shared/extensionGlobals'
 import { toArrayAsync } from '../../shared/utilities/collectionUtils'
@@ -383,7 +383,7 @@ async function runUploadLambdaWithSamBuild(
                 // App builds into a folder named after the resource name. Zip the contents of that, not the whole output dir.
                 return await zipAndUploadDirectory(lambda, path.join(buildDir, resourceName), progress)
             } catch (err) {
-                throw new ToolkitError('Failed to build directory', { cause: err as Error })
+                throw new ToolkitError('Failed to build directory', { cause: UnknownError.cast(err) })
             } finally {
                 await tryRemoveFolder(tempDir)
             }

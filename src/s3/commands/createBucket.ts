@@ -9,8 +9,9 @@ import { localize } from '../../shared/utilities/vsCodeUtils'
 import { Commands } from '../../shared/vscode/commands'
 import { Window } from '../../shared/vscode/window'
 import { S3Node } from '../explorer/s3Nodes'
-import { showViewLogsMessage } from '../../shared/utilities/messages'
 import { validateBucketName } from '../util'
+import { CancellationError } from '../../shared/utilities/timeoutUtils'
+import { ToolkitError, UnknownError } from '../../shared/toolkitError'
 
 /**
  * Creates a bucket in the s3 region represented by the given node.
@@ -33,9 +34,8 @@ export async function createBucketCommand(
     })
 
     if (!bucketName) {
-        getLogger().info('CreateBucket cancelled')
         telemetry.recordS3CreateBucket({ result: 'Cancelled' })
-        return
+        throw new CancellationError('user')
     }
 
     getLogger().info(`Creating bucket: ${bucketName}`)
@@ -46,12 +46,12 @@ export async function createBucketCommand(
         window.showInformationMessage(localize('AWS.s3.createBucket.success', 'Created bucket: {0}', bucketName))
         telemetry.recordS3CreateBucket({ result: 'Succeeded' })
     } catch (e) {
-        getLogger().error(`Failed to create bucket ${bucketName}: %O`, e)
-        showViewLogsMessage(
-            localize('AWS.s3.createBucket.error.general', 'Failed to create bucket: {0}', bucketName),
-            window
-        )
         telemetry.recordS3CreateBucket({ result: 'Failed' })
+
+        throw new ToolkitError(
+            localize('AWS.s3.createBucket.error.general', 'Failed to create bucket: {0}', bucketName),
+            { cause: UnknownError.cast(e) }
+        )
     }
 
     await refreshNode(node, commands)

@@ -6,11 +6,12 @@
 import * as vscode from 'vscode'
 import { toTitleCase } from '../utilities/textUtilities'
 import { isNameMangled } from './env'
-import { UnknownError } from '../toolkitError'
+import { getTelemetryReason, getTelemetryResult, UnknownError } from '../toolkitError'
 import { getLogger, NullLogger } from '../logger/logger'
 import { LoginManager } from '../../credentials/loginManager'
 import { FunctionKeys, Functions, getFunctions } from '../utilities/classUtils'
 import { TreeItemContent, TreeNode } from '../treeview/resourceTreeDataProvider'
+import { recordVscodeExecuteCommand } from '../telemetry/telemetry'
 
 type Callback = (...args: any[]) => any
 type CommandFactory<T extends Callback, U extends any[]> = (...parameters: U) => T
@@ -136,7 +137,7 @@ export class Commands {
 
         for (const [k, v] of Object.entries<Callback>(getFunctions(target))) {
             const mappedKey = `declare${toTitleCase(k)}`
-            const name = !isNameMangled() ? `${target.name}.${k}` : ''
+            const name = !isNameMangled() ? `${target.name}.${k}` : undefined
 
             result[mappedKey] = id => this.declare({ id, name }, (instance: T) => v.bind(instance))
         }
@@ -149,9 +150,9 @@ export class Commands {
     }
 
     private addResource<T extends Callback, U extends any[]>(resource: CommandResource<T, U>): CommandResource<T, U> {
-        const registered = this.resources.get(resource.id)
+        const previous = this.resources.get(resource.id)
 
-        if (registered?.declared) {
+        if (previous !== undefined) {
             throw new Error(`Command "${resource.id}" has already been declared by the Toolkit`)
         }
 
@@ -216,16 +217,11 @@ interface Deferred<T extends Callback, U extends any[]> {
  * by the singleton.
  */
 class CommandResource<T extends Callback = Callback, U extends any[] = any[]> {
-    private disposed?: boolean
-    private subscription?: vscode.Disposable
+    private subscription: vscode.Disposable | undefined
     private idCounter = 0
     public readonly id = this.resource.info.id
 
     public constructor(private readonly resource: Deferred<T, U>, private readonly commands = vscode.commands) {}
-
-    public get declared() {
-        return !this.disposed
-    }
 
     public get registered() {
         return !!this.subscription
@@ -265,8 +261,8 @@ class CommandResource<T extends Callback = Callback, U extends any[] = any[]> {
     }
 
     public dispose(): void {
-        this.disposed = true
         this.subscription?.dispose()
+        this.subscription = undefined
     }
 
     private buildUri(id: string, args: unknown[]) {
@@ -306,7 +302,6 @@ interface CommandInfo<T extends Callback> {
     readonly logging?: boolean
     /** Does the command require credentials? (default: false) */
     readonly autoconnect?: boolean
-    readonly errorHandler?: (error: Error) => ReturnType<T> | void
 }
 
 async function runCommand<T extends Callback>(fn: T, info: CommandInfo<T>): Promise<ReturnType<T> | undefined> {
@@ -314,7 +309,15 @@ async function runCommand<T extends Callback>(fn: T, info: CommandInfo<T>): Prom
     const logger = logging ? getLogger() : new NullLogger()
     const withArgs = args.length > 0 ? ` with arguments [${args.map(String).join(', ')}]` : ''
 
-    // TODO(sijaden): add telemetry instrumentation here
+    const start = new Date()
+    function record(err?: Error) {
+        recordVscodeExecuteCommand({
+            command: info.id,
+            result: getTelemetryResult(err),
+            reason: getTelemetryReason(err),
+            duration: Date.now() - start.getTime(),
+        })
+    }
 
     logger.debug(`command: running ${label}${withArgs}`)
 
@@ -322,18 +325,28 @@ async function runCommand<T extends Callback>(fn: T, info: CommandInfo<T>): Prom
         if (info.autoconnect === true) {
             await LoginManager.tryAutoConnect()
         }
+
         const result = await fn(...args)
-        logger.debug(`command: ${label} succeeded`)
+        logging && record()
 
         return result
     } catch (error) {
-        // We should refrain from calling into extension-specific code directly from this module to avoid
-        // dependency issues. A "global" error handler may be added at a later date.
-        if (info.errorHandler) {
-            return info.errorHandler(UnknownError.cast(error)) ?? undefined
+        logging && record(UnknownError.cast(error))
+
+        if (errorHandler !== undefined) {
+            await errorHandler(info, error)
         } else {
-            logger.error(`command: ${label} failed: %O`, error)
+            logger.error(`command: ${label} failed without error handler: %O`, error)
             throw error
         }
     }
+}
+
+let errorHandler: (info: Omit<CommandInfo<any>, 'args'>, error: unknown) => Promise<void> | void
+export function registerErrorHandler(handler: typeof errorHandler): void {
+    if (errorHandler !== undefined) {
+        throw new TypeError('Error handler has already been registered')
+    }
+
+    errorHandler = handler
 }

@@ -14,7 +14,9 @@ import { S3BucketNode } from '../explorer/s3BucketNode'
 import { S3FileNode } from '../explorer/s3FileNode'
 import { S3FolderNode } from '../explorer/s3FolderNode'
 import { readablePath } from '../util'
-import { showViewLogsMessage, showConfirmationMessage } from '../../shared/utilities/messages'
+import { showConfirmationMessage } from '../../shared/utilities/messages'
+import { CancellationError } from '../../shared/utilities/timeoutUtils'
+import { ToolkitError, UnknownError } from '../../shared/toolkitError'
 
 const DELETE_FILE_DISPLAY_TIMEOUT_MS = 2000
 
@@ -43,9 +45,8 @@ export async function deleteFileCommand(
         window
     )
     if (!isConfirmed) {
-        getLogger().info('DeleteFile cancelled')
         telemetry.recordS3DeleteObject({ result: 'Cancelled' })
-        return
+        throw new CancellationError('user')
     }
 
     getLogger().info(`Deleting file ${filePath}`)
@@ -59,12 +60,15 @@ export async function deleteFileCommand(
         )
         telemetry.recordS3DeleteObject({ result: 'Succeeded' })
     } catch (e) {
-        getLogger().error(`Failed to delete file ${filePath}: %O`, e)
-        showViewLogsMessage(
-            localize('AWS.s3.deleteFile.error.general', 'Failed to delete file {0}', node.file.name),
-            window
-        )
         telemetry.recordS3DeleteObject({ result: 'Failed' })
+
+        throw new ToolkitError(
+            localize('AWS.s3.deleteFile.error.general', 'Failed to delete file {0}', node.file.name),
+            {
+                cause: UnknownError.cast(e),
+                detail: `Failed to delete file ${filePath}`,
+            }
+        )
     }
 
     await refreshNode(node.parent, commands)

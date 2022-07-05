@@ -12,7 +12,8 @@ import { Commands } from '../../shared/vscode/commands'
 import { Window } from '../../shared/vscode/window'
 import { localize } from '../../shared/utilities/vsCodeUtils'
 import { readablePath } from '../util'
-import { showViewLogsMessage } from '../../shared/utilities/messages'
+import { ToolkitError, UnknownError } from '../../shared/toolkitError'
+import { CancellationError } from '../../shared/utilities/timeoutUtils'
 
 /**
  * Creates a subfolder in the bucket or folder represented by the given node.
@@ -39,9 +40,8 @@ export async function createFolderCommand(
     })
 
     if (!folderName) {
-        getLogger().info('CreateFolder cancelled')
         telemetry.recordS3CreateFolder({ result: 'Cancelled' })
-        return
+        throw new CancellationError('user')
     }
 
     const path = node.path + folderName + DEFAULT_DELIMITER
@@ -54,12 +54,15 @@ export async function createFolderCommand(
         window.showInformationMessage(localize('AWS.s3.createFolder.success', 'Created folder {0}', folderName))
         telemetry.recordS3CreateFolder({ result: 'Succeeded' })
     } catch (e) {
-        getLogger().error(`Failed to create folder ${path} in bucket '${node.bucket.name}': %O`, e)
-        showViewLogsMessage(
-            localize('AWS.s3.createFolder.error.general', 'Failed to create folder {0}', folderName),
-            window
-        )
         telemetry.recordS3CreateFolder({ result: 'Failed' })
+
+        throw new ToolkitError(
+            localize('AWS.s3.createFolder.error.general', 'Failed to create folder {0}', folderName),
+            {
+                cause: UnknownError.cast(e),
+                detail: `Failed to create folder ${path} in bucket '${node.bucket.name}'`,
+            }
+        )
     }
 
     await refreshNode(node, commands)

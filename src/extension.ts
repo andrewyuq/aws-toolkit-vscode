@@ -65,7 +65,10 @@ import globals, { initialize } from './shared/extensionGlobals'
 import { join } from 'path'
 import { Settings } from './shared/settings'
 import { isReleaseVersion } from './shared/vscode/env'
-import { Commands } from './shared/vscode/commands2'
+import { Commands, registerErrorHandler } from './shared/vscode/commands2'
+import { CancellationError } from './shared/utilities/timeoutUtils'
+import { ToolkitError, UnknownError } from './shared/toolkitError'
+import { Logging } from './shared/logger/commands'
 
 let localize: nls.LocalizeFunc
 
@@ -84,6 +87,27 @@ export async function activate(context: vscode.ExtensionContext) {
         localize('AWS.channel.aws.remoteInvoke', '{0} Remote Invocations', getIdeProperties().company)
     )
     globals.outputChannel = toolkitOutputChannel
+
+    registerErrorHandler(async (info, error) => {
+        if (CancellationError.isUserCancelled(error) || (error instanceof ToolkitError && error.cancelled)) {
+            getLogger().verbose(`${info.id}: user cancelled`)
+            return
+        }
+
+        const logsItem = localize('AWS.generic.message.viewLogs', 'View Logs...')
+        const logMessage = error instanceof ToolkitError ? error.trace : UnknownError.cast(error).message
+        const logId = getLogger().error(`${info.id}: ${logMessage}`)
+        const message =
+            error instanceof ToolkitError
+                ? error.message
+                : localize('AWS.generic.message.error', 'Failed to run command: {0}', info.id)
+
+        await vscode.window.showErrorMessage(message, logsItem).then(async resp => {
+            if (resp === logsItem) {
+                await Logging.declared.viewLogsAtMessage.execute(logId)
+            }
+        })
+    })
 
     try {
         initializeCredentialsProviderManager()

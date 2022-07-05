@@ -72,7 +72,7 @@ export class S3FileProvider implements FileProvider {
 
         // There's no way to 'silently' fail here which is why we let the error bubble up
         result.catch(err => {
-            const result = (err instanceof ToolkitError ? err?.metric?.result : undefined) ?? 'Failed'
+            const result = err instanceof ToolkitError && err.cancelled ? 'Cancelled' : 'Failed'
             recordS3DownloadObject({ result, component: 'viewer' })
         })
 

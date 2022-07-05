@@ -14,7 +14,7 @@ import { S3FileNode } from '../explorer/s3FileNode'
 import { readablePath } from '../util'
 import { progressReporter } from '../progressReporter'
 import { localize } from '../../shared/utilities/vsCodeUtils'
-import { showViewLogsMessage, showOutputMessage } from '../../shared/utilities/messages'
+import { showOutputMessage } from '../../shared/utilities/messages'
 import { S3Client } from '../../shared/clients/s3Client'
 import { Timeout, CancellationError } from '../../shared/utilities/timeoutUtils'
 import { ToolkitError } from '../../shared/toolkitError'
@@ -101,10 +101,6 @@ export async function downloadFile(file: S3File, options?: FileOptions | BufferO
         throw new ToolkitError(message, {
             cause: err,
             detail: `Failed to download ${readablePath({ bucket: file.bucket, path: file.key })}${extraDetail}`,
-            metric: {
-                name: 's3_downloadObject',
-                result: CancellationError.isUserCancelled(err) ? 'Cancelled' : 'Failed',
-            },
         })
     })
 }
@@ -128,9 +124,8 @@ export async function downloadFileAsCommand(
 
     const saveLocation = await promptForSaveLocation(file.name, window)
     if (!saveLocation) {
-        getLogger().info('DownloadFile cancelled')
         telemetry.recordS3DownloadObject({ result: 'Cancelled' })
-        return
+        throw new CancellationError('user')
     }
 
     const sourcePath = readablePath(node)
@@ -150,18 +145,10 @@ export async function downloadFileAsCommand(
         showOutputMessage(`Successfully downloaded file ${saveLocation}`, outputChannel)
         telemetry.recordS3DownloadObject({ result: 'Succeeded' })
     } catch (e) {
-        if (e instanceof ToolkitError) {
-            const result: telemetry.Result = e.cancelled ? 'Cancelled' : 'Failed'
-            if (result !== 'Cancelled') {
-                if (e.detail) {
-                    getLogger().error(e.detail)
-                }
-                showViewLogsMessage(e.message, window)
-            }
-            telemetry.recordS3DownloadObject({ result })
-        } else {
-            throw e
-        }
+        const result = e instanceof ToolkitError && e.cancelled ? 'Cancelled' : 'Failed'
+        telemetry.recordS3DownloadObject({ result })
+
+        throw e
     }
 }
 

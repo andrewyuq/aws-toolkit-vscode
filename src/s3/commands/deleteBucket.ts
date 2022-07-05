@@ -11,7 +11,8 @@ import { Commands } from '../../shared/vscode/commands'
 import { Window } from '../../shared/vscode/window'
 import { S3BucketNode } from '../explorer/s3BucketNode'
 import { S3Node } from '../explorer/s3Nodes'
-import { showViewLogsMessage } from '../../shared/utilities/messages'
+import { ToolkitError, UnknownError } from '../../shared/toolkitError'
+import { CancellationError } from '../../shared/utilities/timeoutUtils'
 
 /**
  * Deletes the bucket represented by the given node.
@@ -36,9 +37,8 @@ export async function deleteBucketCommand(
 
     const isConfirmed = await showConfirmationDialog(node.bucket.name, window)
     if (!isConfirmed) {
-        getLogger().info('DeleteBucket cancelled')
         telemetry.recordS3DeleteBucket({ result: 'Cancelled' })
-        return
+        throw new CancellationError('user')
     }
 
     getLogger().info(`Deleting bucket ${node.bucket.name}`)
@@ -48,12 +48,14 @@ export async function deleteBucketCommand(
         getLogger().info(`Successfully deleted bucket ${node.bucket.name}`)
         telemetry.recordS3DeleteBucket({ result: 'Succeeded' })
     } catch (e) {
-        getLogger().error(`Failed to delete bucket ${node.bucket.name}: %O`, e)
-        showViewLogsMessage(
-            localize('AWS.s3.deleteBucket.error.general', 'Failed to delete bucket {0}', node.bucket.name),
-            window
-        )
         telemetry.recordS3DeleteBucket({ result: 'Failed' })
+
+        throw new ToolkitError(
+            localize('AWS.s3.deleteBucket.error.general', 'Failed to delete bucket {0}', node.bucket.name),
+            {
+                cause: UnknownError.cast(e),
+            }
+        )
     }
 
     await refreshNode(node.parent, commands)

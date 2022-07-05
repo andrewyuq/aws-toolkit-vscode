@@ -11,24 +11,21 @@ import { S3FileNode } from '../explorer/s3FileNode'
 import { Window } from '../../shared/vscode/window'
 import { localize } from '../../shared/utilities/vsCodeUtils'
 import { invalidNumberWarning } from '../../shared/localizedText'
-import { getLogger } from '../../shared/logger/logger'
+import { ToolkitError, UnknownError } from '../../shared/toolkitError'
+import { CancellationError } from '../../shared/utilities/timeoutUtils'
 
 export async function presignedURLCommand(
     node: S3FileNode,
     window = Window.vscode(),
     env = Env.vscode()
 ): Promise<void> {
-    let validTime: number
-    try {
-        validTime = await promptTime(node.file.key, window)
-    } catch (e) {
-        getLogger().error(e as Error)
+    const validTime = await promptTime(node.file.key, window)
+    if (validTime === undefined) {
         telemetry.recordS3CopyUrl({ result: 'Cancelled', presigned: true })
-        return
+        throw new CancellationError('user')
     }
 
     const s3Client = node.s3
-
     const request: SignedUrlRequest = {
         bucketName: node.bucket.name,
         key: node.file.key,
@@ -36,17 +33,16 @@ export async function presignedURLCommand(
         operation: 'getObject',
     }
 
-    let url: string
     try {
-        url = await s3Client.getSignedUrl(request)
+        const url = await s3Client.getSignedUrl(request)
+        await copyToClipboard(url, 'URL', window, env)
+        telemetry.recordS3CopyUrl({ result: 'Succeeded', presigned: true })
     } catch (e) {
-        window.showErrorMessage('Error creating the presigned URL. Make sure you have access to the requested file.')
         telemetry.recordS3CopyUrl({ result: 'Failed', presigned: true })
-        return
+        throw new ToolkitError('Error creating the presigned URL. Make sure you have access to the requested file.', {
+            cause: UnknownError.cast(e),
+        })
     }
-
-    await copyToClipboard(url, 'URL', window, env)
-    telemetry.recordS3CopyUrl({ result: 'Succeeded', presigned: true })
 }
 
 export async function promptTime(fileName: string, window = Window.vscode()): Promise<number> {
@@ -67,7 +63,7 @@ export async function promptTime(fileName: string, window = Window.vscode()): Pr
         throw new Error(`promptTime: Invalid input by the user`)
     }
 
-    return Promise.resolve(time)
+    return time
 }
 
 function validateTime(time: string): string | undefined {

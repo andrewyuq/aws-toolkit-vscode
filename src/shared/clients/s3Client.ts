@@ -149,23 +149,17 @@ export class DefaultS3Client {
      * @throws Error if there is an error calling S3.
      */
     public async createBucket(request: CreateBucketRequest): Promise<CreateBucketResponse> {
-        getLogger().debug('CreateBucket called with request: %O', request)
         const s3 = await this.createS3()
 
-        try {
-            await s3
-                .createBucket({
-                    Bucket: request.bucketName,
-                    // Passing us-east-1 for LocationConstraint breaks creating bucket. To make a bucket in us-east-1, you need to
-                    // not pass a region, so check for this case.
-                    CreateBucketConfiguration:
-                        this.regionCode == 'us-east-1' ? undefined : { LocationConstraint: this.regionCode },
-                })
-                .promise()
-        } catch (e) {
-            getLogger().error('Failed to create bucket %s: %O', request.bucketName, e)
-            throw e
-        }
+        await s3
+            .createBucket({
+                Bucket: request.bucketName,
+                // Passing us-east-1 for LocationConstraint breaks creating bucket. To make a bucket in us-east-1, you need to
+                // not pass a region, so check for this case.
+                CreateBucketConfiguration:
+                    this.regionCode == 'us-east-1' ? undefined : { LocationConstraint: this.regionCode },
+            })
+            .promise()
 
         const response: CreateBucketResponse = {
             bucket: new DefaultBucket({
@@ -174,7 +168,7 @@ export class DefaultS3Client {
                 name: request.bucketName,
             }),
         }
-        getLogger().debug('CreateBucket returned response: %O', response)
+
         return response
     }
 
